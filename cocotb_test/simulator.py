@@ -58,6 +58,7 @@ class Simulator:
         timescale=None,
         gui=False,
         simulation_args=None,
+        sim_script=None,
         **kwargs,
     ):
 
@@ -153,6 +154,7 @@ class Simulator:
         self.plus_args = plus_args
         self.force_compile = force_compile
         self.compile_only = compile_only
+        self.sim_script = sim_script
 
         if kwargs:
             warnings.warn(
@@ -542,18 +544,18 @@ class Questa(Simulator):
         return [f"-g{name}={str(value)}" for name, value in parameters.items()]
 
     def do_script(self):
-        do_script = ""
+        do_script = []
+        if self.sim_script:
+            do_script.append(f"{self.sim_script};")
         if self.waves:
-            do_script += "log -recursive /*;"
+            do_script.extend(["log", "-recursive", "/*;"])
         if not self.gui:
-            do_script += "run -all; quit"
+            do_script.extend(["run", "-all;", "quit;"])
         return do_script
 
     def build_command(self):
 
         cmd = []
-
-        do_script = self.do_script()
 
         if self.vhdl_sources:
             compile_args = self.compile_args + self.vhdl_compile_args
@@ -599,7 +601,6 @@ class Questa(Simulator):
                     + self.simulation_args
                     + [as_tcl_value(v) for v in self.get_parameter_commands(self.parameters)]
                     + self.toplevel
-                    + ["-do", do_script]
                 )
                 if self.verilog_sources:
                     self.env["GPI_EXTRA"] = cocotb.config.lib_name_path("vpi", "questa") + ":cocotbvpi_entry_point"
@@ -616,12 +617,28 @@ class Questa(Simulator):
                     + [as_tcl_value(v) for v in self.get_parameter_commands(self.parameters)]
                     + self.toplevel
                     + [as_tcl_value(v) for v in self.plus_args]
-                    + ["-do", do_script]
                 )
                 if self.vhdl_sources:
                     self.env["GPI_EXTRA"] = cocotb.config.lib_name_path("fli", "questa") + ":cocotbfli_entry_point"
 
+        do_script = self.do_script()
+        if len(do_script) > 0:
+            if self.gui:
+                cmd.append(["do", *do_script])
+            else:
+                cmd[-1].extend(["-do", " ".join(do_script)])
+
         return cmd
+
+    def execute(self, cmds):
+        __tracebackhide__ = True  # Hide the traceback when using PyTest.
+
+        if self.gui:
+            f = open(os.path.join(self.sim_dir, "runsim.do"), "w")
+            f.write("\n".join(" ".join([as_tcl_value(part) for part in cmd]) for cmd in cmds))
+            f.close()
+            cmds = [["vsim", "-gui", "-do", "runsim.do"] + self.simulation_args]
+        super().execute(cmds)
 
 
 class Modelsim(Questa):
